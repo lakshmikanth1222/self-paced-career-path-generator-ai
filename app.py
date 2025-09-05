@@ -2,6 +2,7 @@
 
 import streamlit as st
 from utils import run_agent_sync
+import re # Import the regular expression module
 import os
 
 st.set_page_config(page_title="MCP POC", page_icon="🤖", layout="wide")
@@ -21,7 +22,7 @@ if 'is_generating' not in st.session_state:
 # Sidebar for optional configuration
 st.sidebar.header("Optional Configuration")
 st.sidebar.subheader("Pipedream URL")
-notion_pipedream_url = st.sidebar.text_input("Notion URL (Optional)", 
+notion_pipedream_url = st.sidebar.text_input("Notion URL (Optional)",
     placeholder="Enter your Pipedream Notion URL")
 
 # Quick guide before goal input
@@ -46,7 +47,7 @@ progress_bar = st.empty()
 def update_progress(message: str):
     """Update progress in the Streamlit UI"""
     st.session_state.current_step = message
-    
+
     # Determine section and update progress
     if "Setting up agent with tools" in message:
         section = "Setup"
@@ -66,15 +67,15 @@ def update_progress(message: str):
         st.session_state.is_generating = False
     else:
         section = st.session_state.last_section or "Progress"
-    
+
     st.session_state.last_section = section
-    
+
     progress_bar.progress(st.session_state.progress)
-    
+
     with progress_container:
         if section != st.session_state.last_section and section != "Complete":
             st.write(f"**{section}**")
-        
+
         if message == "Learning path generation complete!":
             st.success("All steps completed! 🎉")
         else:
@@ -89,24 +90,42 @@ if st.button("Generate Learning Path", type="primary", disabled=st.session_state
     else:
         try:
             st.session_state.is_generating = True
-            
+
             st.session_state.current_step = ""
             st.session_state.progress = 0
             st.session_state.last_section = ""
-            
+
             result = run_agent_sync(
                 notion_pipedream_url=notion_pipedream_url if notion_pipedream_url else None,
                 user_goal=user_goal,
                 progress_callback=update_progress
             )
-            
-            st.header("Your Learning Path")
-            if result and "messages" in result:
-                for msg in result["messages"]:
-                    st.markdown(f"📚 {msg.content}")
+
+            # --- MODIFIED OUTPUT SECTION ---
+            st.header("✅ Your Learning Path is Ready!")
+            if result and "messages" in result and result["messages"]:
+                # Isolate the very last message, which contains the clean summary
+                final_message_content = result["messages"][-1].content
+
+                # Use regular expressions to find the links within the text
+                drive_link_match = re.search(r'https?://docs\.google\.com/document/d/[\w-]+', final_message_content)
+                youtube_link_match = re.search(r'https?://www\.youtube\.com/playlist\?list=[\w-]+', final_message_content)
+
+                drive_link = drive_link_match.group(0) if drive_link_match else None
+                youtube_link = youtube_link_match.group(0) if youtube_link_match else None
+
+                # Display the links in a structured way
+                if drive_link and youtube_link:
+                    st.success(f"**Google Doc Link:** [{drive_link}]({drive_link})")
+                    st.success(f"**YouTube Playlist Link:** [{youtube_link}]({youtube_link})")
+                else:
+                    # Fallback if links can't be extracted automatically
+                    st.warning("Could not automatically extract the links. Here is the agent's final output:")
+                    st.markdown(final_message_content)
             else:
                 st.error("No results were generated. Please try again.")
-                st.session_state.is_generating = False
+
+            st.session_state.is_generating = False
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.error("Please check your backend configuration and try again.")
