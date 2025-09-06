@@ -1,9 +1,6 @@
-# app.py
 
 import streamlit as st
 from utils import run_agent_sync
-import re # Import the regular expression module
-import os
 
 st.set_page_config(page_title="MCP POC", page_icon="🤖", layout="wide")
 
@@ -19,18 +16,28 @@ if 'last_section' not in st.session_state:
 if 'is_generating' not in st.session_state:
     st.session_state.is_generating = False
 
-# Sidebar for optional configuration
-st.sidebar.header("Optional Configuration")
-st.sidebar.subheader("Pipedream URL")
-notion_pipedream_url = st.sidebar.text_input("Notion URL (Optional)",
-    placeholder="Enter your Pipedream Notion URL")
+# Configuration (moved to backend - only Notion remains optional)
+st.sidebar.header("Configuration")
+
+# Secondary tool selection
+secondary_tool = st.sidebar.radio(
+    "Select Secondary Tool:",
+    ["Drive", "Notion"]
+)
+
+# Notion URL input (only if Notion is selected)
+if secondary_tool == "Notion":
+    notion_pipedream_url = st.sidebar.text_input("Notion URL", 
+        placeholder="Enter your Pipedream Notion URL")
+else:
+    notion_pipedream_url = None
 
 # Quick guide before goal input
 st.info("""
 **Quick Guide:**
-1.  **YouTube and Google Drive are configured in the backend.** A learning path document will be created in the common Google Drive.
-2.  Optionally, add your Pipedream Notion URL in the sidebar to also save the path to Notion.
-3.  Enter a clear learning goal below. For example:
+1. Select your preferred secondary tool (Drive or Notion)
+2. If selecting Notion, enter your Notion Pipedream URL
+3. Enter a clear learning goal, for example:
     - "I want to learn python basics in 3 days"
     - "I want to learn data science basics in 10 days"
 """)
@@ -38,7 +45,7 @@ st.info("""
 # Main content area
 st.header("Enter Your Goal")
 user_goal = st.text_input("Enter your learning goal:",
-                        help="Describe what you want to learn. We'll generate a structured path using YouTube and Google Drive.")
+                        help="Describe what you want to learn, and we'll generate a structured path using YouTube content and your selected tool.")
 
 # Progress area
 progress_container = st.container()
@@ -47,7 +54,7 @@ progress_bar = st.empty()
 def update_progress(message: str):
     """Update progress in the Streamlit UI"""
     st.session_state.current_step = message
-
+    
     # Determine section and update progress
     if "Setting up agent with tools" in message:
         section = "Setup"
@@ -67,66 +74,56 @@ def update_progress(message: str):
         st.session_state.is_generating = False
     else:
         section = st.session_state.last_section or "Progress"
-
+    
     st.session_state.last_section = section
-
+    
+    # Show progress bar
     progress_bar.progress(st.session_state.progress)
-
+    
+    # Update progress container with current status
     with progress_container:
+        # Show section header if it changed
         if section != st.session_state.last_section and section != "Complete":
             st.write(f"**{section}**")
-
+        
+        # Show message with tick for completed steps
         if message == "Learning path generation complete!":
             st.success("All steps completed! 🎉")
         else:
             prefix = "✓" if st.session_state.progress >= 0.5 else "→"
             st.write(f"{prefix} {message}")
 
-
 # Generate Learning Path button
 if st.button("Generate Learning Path", type="primary", disabled=st.session_state.is_generating):
-    if not user_goal:
+    if (secondary_tool == "Notion" and not notion_pipedream_url):
+        st.error(f"Please enter your Pipedream Notion URL in the sidebar.")
+    elif not user_goal:
         st.warning("Please enter your learning goal.")
     else:
         try:
+            # Set generating flag
             st.session_state.is_generating = True
-
+            
+            # Reset progress
             st.session_state.current_step = ""
             st.session_state.progress = 0
             st.session_state.last_section = ""
-
+            
             result = run_agent_sync(
-                notion_pipedream_url=notion_pipedream_url if notion_pipedream_url else None,
+                notion_pipedream_url=notion_pipedream_url,
                 user_goal=user_goal,
                 progress_callback=update_progress
             )
-
-            # --- MODIFIED OUTPUT SECTION ---
-            st.header("✅ Your Learning Path is Ready!")
-            if result and "messages" in result and result["messages"]:
-                # Isolate the very last message, which contains the clean summary
-                final_message_content = result["messages"][-1].content
-
-                # Use regular expressions to find the links within the text
-                drive_link_match = re.search(r'https?://docs\.google\.com/document/d/[\w-]+', final_message_content)
-                youtube_link_match = re.search(r'https?://www\.youtube\.com/playlist\?list=[\w-]+', final_message_content)
-
-                drive_link = drive_link_match.group(0) if drive_link_match else None
-                youtube_link = youtube_link_match.group(0) if youtube_link_match else None
-
-                # Display the links in a structured way
-                if drive_link and youtube_link:
-                    st.success(f"**Google Doc Link:** [{drive_link}]({drive_link})")
-                    st.success(f"**YouTube Playlist Link:** [{youtube_link}]({youtube_link})")
-                else:
-                    # Fallback if links can't be extracted automatically
-                    st.warning("Could not automatically extract the links. Here is the agent's final output:")
-                    st.markdown(final_message_content)
+            
+            # Display results
+            st.header("Your Learning Path")
+            if result and "messages" in result:
+                for msg in result["messages"]:
+                    st.markdown(f"📚 {msg.content}")
             else:
                 st.error("No results were generated. Please try again.")
-
-            st.session_state.is_generating = False
+                st.session_state.is_generating = False
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
-            st.error("Please check your backend configuration and try again.")
+            st.error("Please check your configuration and try again.")
             st.session_state.is_generating = False
