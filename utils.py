@@ -1,33 +1,25 @@
-# utils.py
 
-import os
-from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from prompt import user_goal_prompt
 from langgraph.prebuilt import create_react_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
-# --- CORRECTED LINE BELOW ---
 from langchain_google_genai import ChatGoogleGenerativeAI
-from typing import Optional, Any, Callable
+from typing import Optional, Tuple, Any, Callable
 import asyncio
-from youtube_tools import search_youtube, create_youtube_playlist, add_videos_to_youtube_playlist
+import os
 
-# Load environment variables from .env file
-load_dotenv()
+# Backend configuration - Moved from frontend to here
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AIzaSyAca-e1IA7RHSBncNv3pMoCVneMG1Kk3aI")
+YOUTUBE_PIPEDREAM_URL = os.environ.get("YOUTUBE_PIPEDREAM_URL", "https://mcp.pipedream.net/d791e603-ff8e-4364-99ac-da419ec1268a/youtube_data_api")
+DRIVE_PIPEDREAM_URL = os.environ.get("DRIVE_PIPEDREAM_URL", "https://mcp.pipedream.net/d791e603-ff8e-4364-99ac-da419ec1268a/google_drive")
 
 cfg = RunnableConfig(recursion_limit=100)
 
-# --- CORRECTED FUNCTION SIGNATURE BELOW ---
 def initialize_model() -> ChatGoogleGenerativeAI:
-    """Initializes the model using the API key from environment variables."""
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-    if not google_api_key:
-        raise ValueError("GOOGLE_API_KEY not found in environment variables.")
-    # --- CORRECTED CLASS NAME BELOW ---
     return ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key=google_api_key
+        model="gemini-2.5-flash",
+        google_api_key=GOOGLE_API_KEY
     )
 
 async def setup_agent_with_tools(
@@ -35,34 +27,29 @@ async def setup_agent_with_tools(
     progress_callback: Optional[Callable[[str], None]] = None
 ) -> Any:
     """
-    Set up the agent with backend-configured YouTube and Drive tools,
-    and an optional user-provided Notion tool.
+    Set up the agent with YouTube (mandatory), Drive (mandatory), and optional Notion tools.
     """
     try:
         if progress_callback:
             progress_callback("Setting up agent with tools... ✅")
-
-        # --- Backend Tools Configuration ---
-        # 1. Custom YouTube tools (from youtube_tools.py)
-        backend_tools = [search_youtube, create_youtube_playlist, add_videos_to_youtube_playlist]
-        if progress_callback:
-            progress_callback("Initialized YouTube integration... ✅")
-
-        # 2. Drive MCP tool (from environment variable)
-        drive_pipedream_url = os.getenv("DRIVE_PIPEDREAM_URL")
-        tools_config = {}
-        if drive_pipedream_url:
-            tools_config["drive"] = {
-                "url": drive_pipedream_url,
+        
+        # Initialize tools configuration with mandatory YouTube and Drive
+        tools_config = {
+            "youtube": {
+                "url": YOUTUBE_PIPEDREAM_URL,
+                "transport": "streamable_http"
+            },
+            "drive": {
+                "url": DRIVE_PIPEDREAM_URL,
                 "transport": "streamable_http"
             }
-            if progress_callback:
-                progress_callback("Added Google Drive integration... ✅")
-        else:
-            print("Warning: DRIVE_PIPEDREAM_URL not found. Drive tool will be unavailable.")
+        }
 
-        # --- Optional Frontend Tool Configuration ---
-        # 3. Notion MCP tool (from user input)
+        if progress_callback:
+            progress_callback("Added YouTube integration... ✅")
+            progress_callback("Added Google Drive integration... ✅")
+
+        # Add Notion if URL provided
         if notion_pipedream_url:
             tools_config["notion"] = {
                 "url": notion_pipedream_url,
@@ -71,22 +58,21 @@ async def setup_agent_with_tools(
             if progress_callback:
                 progress_callback("Added Notion integration... ✅")
 
-        # --- Combine All Tools ---
-        mcp_tools = []
-        if tools_config:
-            if progress_callback:
-                progress_callback("Initializing MCP client for Drive/Notion... ✅")
-            mcp_client = MultiServerMCPClient(tools_config)
-            mcp_tools = await mcp_client.get_tools()
-
-        all_tools = backend_tools + mcp_tools
+        if progress_callback:
+            progress_callback("Initializing MCP client... ✅")
+        # Initialize MCP client with configured tools
+        mcp_client = MultiServerMCPClient(tools_config)
+        
+        if progress_callback:
+            progress_callback("Getting available tools... ✅")
+        # Get all tools
+        tools = await mcp_client.get_tools()
         
         if progress_callback:
             progress_callback("Creating AI agent... ✅")
-        
-        # Initialize model using the backend key
+        # Create agent with initialized model
         mcp_orch_model = initialize_model()
-        agent = create_react_agent(mcp_orch_model, all_tools)
+        agent = create_react_agent(mcp_orch_model, tools)
         
         if progress_callback:
             progress_callback("Setup complete! Starting to generate learning path... ✅")
@@ -111,11 +97,13 @@ def run_agent_sync(
                 progress_callback=progress_callback
             )
             
+            # Combine user goal with prompt template
             learning_path_prompt = "User Goal: " + user_goal + "\n" + user_goal_prompt
             
             if progress_callback:
                 progress_callback("Generating your learning path...")
             
+            # Run the agent
             result = await agent.ainvoke(
                 {"messages": [HumanMessage(content=learning_path_prompt)]},
                 config=cfg
@@ -129,6 +117,7 @@ def run_agent_sync(
             print(f"Error in _run: {str(e)}")
             raise
 
+    # Run in new event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
