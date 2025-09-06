@@ -1,4 +1,3 @@
-
 user_goal_prompt = """
 Main Instruction: You are a day wise learning path generator. You will be given a goal. You have to generate a comprehensive day-wise learning path for the user goal in a Drive document/Notion page and create a corresponding YouTube playlist containing the core learning videos.
 Step-by-Step Execution Flow:
